@@ -1,15 +1,13 @@
 {
   "compilerOptions": {
     "baseUrl": ".",
-    "inlineSourceMap": true,
-    "inlineSources": true,
     "module": "ESNext",
     "target": "ES2022",
-    "allowJs": true,
     "noImplicitAny": true,
     "moduleResolution": "node",
     "importHelpers": true,
     "isolatedModules": true,
+    "noUnusedLocals": true,
     "strictNullChecks": true,
     "strict": true
   },

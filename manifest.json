@@ -1,7 +1,7 @@
 {
   "id": "tolaria-navigator",
   "name": "Tolaria Navigator",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "minAppVersion": "1.4.0",
 	"description": "Tolaria-style sidebar, note list and home dashboard: navigation, stats, calendar, agenda and favorites.",
   "author": "lrwei91",

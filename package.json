@@ -1,12 +1,16 @@
 {
   "name": "tolaria-navigator",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Tolaria-style sidebar navigator with note list for Obsidian",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-    "test": "node --no-warnings --experimental-strip-types --test tests/*.test.mjs"
+    "test": "node --no-warnings --experimental-strip-types --test tests/*.test.mjs",
+    "version": "node version-bump.mjs && git add manifest.json versions.json package.json"
+  },
+  "engines": {
+    "node": ">=22.6"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

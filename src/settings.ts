@@ -67,7 +67,7 @@ export const DEFAULT_SETTINGS: TolariaNavigatorSettings = {
 	pinnedNotePaths: [],
 	legacyFavoriteFlagsMigrated: false,
 	folderExpansionState: {},
-	newNoteTemplatePath: "templates/inbox-item.md",
+	newNoteTemplatePath: "",
 };
 
 const LIST_LABELS: Record<DefaultListKind, string> = {
@@ -309,11 +309,11 @@ export class TolariaNavigatorSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("新建笔记模板")
-			.setDesc("新建笔记时复制的主库模板；留空则创建空白 Markdown。")
+			.setDesc("新建笔记时复制的 Markdown 模板路径；留空则创建空白笔记。")
 			.addSearch((search) => {
 				new TemplateFileSuggest(this.app, search.inputEl);
 				search
-					.setPlaceholder(DEFAULT_SETTINGS.newNoteTemplatePath)
+					.setPlaceholder("templates/your-template.md")
 					.setValue(this.plugin.settings.newNoteTemplatePath)
 					.onChange(async (value) => {
 						this.plugin.settings.newNoteTemplatePath = normalizeSettingPath(value);
