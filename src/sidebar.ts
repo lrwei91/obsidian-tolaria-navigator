@@ -1,16 +1,15 @@
 import {
-	App,
 	ItemView,
 	Menu,
-	Modal,
 	normalizePath,
 	Notice,
-	Setting,
 	setIcon,
 	TFolder,
 	WorkspaceLeaf,
 } from "obsidian";
 import type TolariaNavigatorPlugin from "./main";
+import { errorMessage } from "./list-utils";
+import { PromptModal } from "./prompt-modal";
 import { filtersEqual, NoteFilter } from "./types";
 
 export const VIEW_TYPE_TOLARIA_SIDEBAR = "tolaria-sidebar-view";
@@ -325,12 +324,12 @@ export class SidebarView extends ItemView {
 	}
 
 	private promptCreateFolder(parent: TFolder): void {
-		new FolderNameModal(
-			this.plugin.app,
-			"新建文件夹",
-			"",
-			"创建",
-			async (name) => {
+		new PromptModal(this.plugin.app, {
+			title: "新建文件夹",
+			label: "名称",
+			initialValue: "",
+			submitLabel: "创建",
+			onSubmit: async (name) => {
 				const path = joinVaultPath(parent.path, name);
 				if (this.plugin.app.vault.getAbstractFileByPath(path)) {
 					new Notice(`文件夹已存在：${path}`);
@@ -343,8 +342,8 @@ export class SidebarView extends ItemView {
 				} catch (error) {
 					new Notice(`创建文件夹失败：${errorMessage(error)}`);
 				}
-			}
-		).open();
+			},
+		}).open();
 	}
 
 	private revealInFileManager(folder: TFolder): void {
@@ -362,12 +361,12 @@ export class SidebarView extends ItemView {
 	}
 
 	private promptRenameFolder(folder: TFolder): void {
-		new FolderNameModal(
-			this.plugin.app,
-			"重命名文件夹",
-			folder.name,
-			"重命名",
-			async (name) => {
+		new PromptModal(this.plugin.app, {
+			title: "重命名文件夹",
+			label: "名称",
+			initialValue: folder.name,
+			submitLabel: "重命名",
+			onSubmit: async (name) => {
 				if (name === folder.name) return;
 				const parentPath = folder.parent?.path ?? "";
 				const nextPath = joinVaultPath(parentPath, name);
@@ -380,8 +379,8 @@ export class SidebarView extends ItemView {
 				} catch (error) {
 					new Notice(`重命名失败：${errorMessage(error)}`);
 				}
-			}
-		).open();
+			},
+		}).open();
 	}
 
 	private async deleteFolder(folder: TFolder): Promise<void> {
@@ -393,65 +392,8 @@ export class SidebarView extends ItemView {
 	}
 }
 
-class FolderNameModal extends Modal {
-	private value: string;
-
-	constructor(
-		app: App,
-		private title: string,
-		initialValue: string,
-		private submitLabel: string,
-		private onSubmit: (value: string) => Promise<void>
-	) {
-		super(app);
-		this.value = initialValue;
-	}
-
-	onOpen(): void {
-		this.setTitle(this.title);
-		let inputEl: HTMLInputElement;
-		new Setting(this.contentEl).setName("名称").addText((text) => {
-			inputEl = text.inputEl;
-			text.setValue(this.value).onChange((value) => (this.value = value));
-			text.inputEl.addEventListener("keydown", (evt) => {
-				if (evt.key === "Enter") void this.submit();
-			});
-		});
-		new Setting(this.contentEl)
-			.addButton((button) => button.setButtonText("取消").onClick(() => this.close()))
-			.addButton((button) =>
-				button
-					.setButtonText(this.submitLabel)
-					.setCta()
-					.onClick(() => void this.submit())
-			);
-		window.setTimeout(() => {
-			inputEl.focus();
-			inputEl.select();
-		}, 0);
-	}
-
-	private async submit(): Promise<void> {
-		const value = this.value.trim();
-		if (!value) {
-			new Notice("名称不能为空");
-			return;
-		}
-		if (/[\\/]/.test(value)) {
-			new Notice("名称不能包含斜杠");
-			return;
-		}
-		this.close();
-		await this.onSubmit(value);
-	}
-}
-
 function joinVaultPath(parent: string, name: string): string {
 	return normalizePath(parent ? `${parent}/${name}` : name);
-}
-
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
 }
 
 function sortedFolders(folder: TFolder): TFolder[] {

@@ -1,18 +1,13 @@
 import {
-	App,
 	ItemView,
-	MarkdownView,
 	Menu,
-	Modal,
-	normalizePath,
-	Notice,
-	Setting,
 	setIcon,
 	TFile,
 	WorkspaceLeaf,
 } from "obsidian";
 import type TolariaNavigatorPlugin from "./main";
 import { getVirtualRange } from "./list-utils";
+import { NoteActions } from "./note-actions";
 import {
 	getDefaultDirection,
 	isArchivedCache,
@@ -31,6 +26,7 @@ const VIRTUAL_OVERSCAN = 4;
 
 export class NoteListView extends ItemView {
 	private plugin: TolariaNavigatorPlugin;
+	private actions: NoteActions;
 	private filter: NoteFilter = { kind: "all", label: "全部笔记" };
 	private sortOption: SortOption = "modified";
 	private sortDirection: SortDirection = "desc";
@@ -48,6 +44,7 @@ export class NoteListView extends ItemView {
 	constructor(leaf: WorkspaceLeaf, plugin: TolariaNavigatorPlugin) {
 		super(leaf);
 		this.plugin = plugin;
+		this.actions = new NoteActions(plugin, () => this.refresh());
 		this.sortOption = plugin.settings.defaultSort;
 		this.sortDirection = plugin.settings.defaultSortDirection;
 		this.navigation = false;
@@ -210,7 +207,7 @@ export class NoteListView extends ItemView {
 			attr: { "aria-label": "新建笔记" },
 		});
 		setIcon(createBtn.createSpan("tol-btn-icon"), "plus");
-		createBtn.addEventListener("click", () => void this.createNote());
+		createBtn.addEventListener("click", () => void this.actions.createNote(this.filter));
 
 		const keyboardBtn = actions.createEl("button", {
 			cls: "tol-header-btn tol-icon-btn",
@@ -574,7 +571,7 @@ export class NoteListView extends ItemView {
 			item
 				.setTitle("在新窗口中打开")
 				.setIcon("square-arrow-out-up-right")
-				.onClick(() => void this.openInNewWindow(file))
+				.onClick(() => void this.actions.openInNewWindow(file))
 		);
 		menu.addItem((item) =>
 			item
@@ -599,245 +596,49 @@ export class NoteListView extends ItemView {
 				.setIcon("circle-check")
 				.setChecked(organized)
 				.onClick(() =>
-					void this.toggleFrontmatterFlag(file, "organized", "整理状态")
+					void this.actions.toggleOrganized(file)
 				)
 		);
 		menu.addItem((item) =>
 			item
 				.setTitle("重命名文件名…")
 				.setIcon("pencil")
-				.onClick(() => this.promptRenameFile(file))
+				.onClick(() => this.actions.promptRename(file))
 		);
 		menu.addSeparator();
 		menu.addItem((item) =>
 			item
 				.setTitle("在文件管理器中显示")
 				.setIcon("folder-open")
-				.onClick(() => this.revealInFileManager(file))
+				.onClick(() => this.actions.revealInFileManager(file))
 		);
 		menu.addItem((item) =>
 			item
 				.setTitle("复制文件路径")
 				.setIcon("clipboard")
-				.onClick(() => void this.copyFilePath(file))
+				.onClick(() => void this.actions.copyFilePath(file))
 		);
 		menu.addItem((item) =>
 			item
 				.setTitle("将笔记导出为 PDF")
 				.setIcon("file-type-2")
-				.onClick(() => void this.exportPdf(file))
+				.onClick(() => void this.actions.exportPdf(file))
 		);
 		menu.addSeparator();
 		menu.addItem((item) =>
 			item
 				.setTitle(archived ? "取消归档这条笔记" : "归档这条笔记")
 				.setIcon("archive")
-				.onClick(() => void this.toggleArchiveState(file, archived))
+				.onClick(() => void this.actions.toggleArchive(file, archived))
 		);
 		menu.addItem((item) =>
 			item
 				.setTitle("删除这条笔记")
 				.setIcon("trash-2")
 				.setWarning(true)
-				.onClick(() => void this.deleteNote(file))
+				.onClick(() => void this.actions.deleteNote(file))
 		);
 
 		return menu;
 	}
-
-	private async openInNewWindow(file: TFile): Promise<void> {
-		try {
-			await this.plugin.app.workspace.getLeaf("window").openFile(file);
-		} catch (error) {
-			new Notice(`无法在新窗口打开：${noteActionError(error)}`);
-		}
-	}
-
-	private async toggleFrontmatterFlag(
-		file: TFile,
-		key: "organized",
-		label: string
-	): Promise<void> {
-		try {
-			await this.plugin.app.fileManager.processFrontMatter(file, (frontmatter) => {
-				if (frontmatter[key] === true) {
-					delete frontmatter[key];
-				} else {
-					frontmatter[key] = true;
-				}
-			});
-			await this.refresh();
-		} catch (error) {
-			new Notice(`${label}更新失败：${noteActionError(error)}`);
-		}
-	}
-
-	private async toggleArchiveState(
-		file: TFile,
-		currentlyArchived: boolean
-	): Promise<void> {
-		try {
-			await this.plugin.app.fileManager.processFrontMatter(file, (frontmatter) => {
-				if (currentlyArchived) {
-					delete frontmatter["archived"];
-					if (
-						String(frontmatter["status"] ?? "")
-							.trim()
-							.toLowerCase() === "archived"
-					) {
-						delete frontmatter["status"];
-					}
-				} else {
-					frontmatter["archived"] = true;
-				}
-			});
-			await this.refresh();
-		} catch (error) {
-			new Notice(`归档状态更新失败：${noteActionError(error)}`);
-		}
-	}
-
-	private promptRenameFile(file: TFile): void {
-		new NoteNameModal(this.plugin.app, file.basename, async (value) => {
-			const oldPath = file.path;
-			const filename = value.toLowerCase().endsWith(".md")
-				? value
-				: `${value}.md`;
-			const parentPath = file.parent?.path ?? "";
-			const nextPath = normalizePath(
-				parentPath ? `${parentPath}/${filename}` : filename
-			);
-			if (nextPath === file.path) return;
-			if (this.plugin.app.vault.getAbstractFileByPath(nextPath)) {
-				new Notice(`文件已存在：${nextPath}`);
-				return;
-			}
-			try {
-				await this.plugin.app.fileManager.renameFile(file, nextPath);
-				await this.plugin.replacePinnedNotePath(oldPath, nextPath);
-			} catch (error) {
-				new Notice(`重命名失败：${noteActionError(error)}`);
-			}
-		}).open();
-	}
-
-	private revealInFileManager(file: TFile): void {
-		const result = this.plugin.desktop.showVaultPath(file.path);
-		if (!result.ok) new Notice(result.error ?? "无法打开文件管理器");
-	}
-
-	private async copyFilePath(file: TFile): Promise<void> {
-		try {
-			await navigator.clipboard.writeText(file.path);
-			new Notice("已复制文件路径");
-		} catch (error) {
-			new Notice(`复制路径失败：${noteActionError(error)}`);
-		}
-	}
-
-	private async exportPdf(file: TFile): Promise<void> {
-		await this.plugin.openNote(file);
-		const fileLeaf = this.plugin.app.workspace
-			.getLeavesOfType("markdown")
-			.find(
-				(leaf) =>
-					leaf.view instanceof MarkdownView && leaf.view.file === file
-			);
-		if (fileLeaf) {
-			this.plugin.app.workspace.setActiveLeaf(fileLeaf, { focus: true });
-		}
-		const commands = (
-			this.plugin.app as unknown as {
-				commands?: {
-					findCommand(id: string): unknown;
-					executeCommandById(id: string): boolean;
-				};
-		}
-		).commands;
-		if (!commands?.findCommand("workspace:export-pdf")) {
-			new Notice("当前 Obsidian 版本不支持导出 PDF 命令");
-			return;
-		}
-		commands.executeCommandById("workspace:export-pdf");
-	}
-
-	private async deleteNote(file: TFile): Promise<void> {
-		try {
-			const deleted = await this.plugin.app.fileManager.promptForDeletion(file);
-			if (deleted) await this.plugin.removePinnedNote(file.path);
-		} catch (error) {
-			new Notice(`删除失败：${noteActionError(error)}`);
-		}
-	}
-
-	/** 新建笔记：文件夹视图建到当前文件夹；其余视图按收件箱工作流建到 inbox/ */
-	private async createNote(): Promise<void> {
-		const folderPath =
-			this.filter.kind === "folder"
-				? (this.filter.value ?? "")
-				: this.plugin.settings.newNoteFolder;
-		try {
-			const file = await this.plugin.createNoteInFolder(folderPath);
-			new Notice(`已创建：${file.path}`);
-			await this.refresh();
-			await this.plugin.openNote(file);
-		} catch (err) {
-			new Notice(`创建失败：${err instanceof Error ? err.message : String(err)}`);
-		}
-	}
-}
-
-class NoteNameModal extends Modal {
-	private value: string;
-
-	constructor(
-		app: App,
-		initialValue: string,
-		private onSubmit: (value: string) => Promise<void>
-	) {
-		super(app);
-		this.value = initialValue;
-	}
-
-	onOpen(): void {
-		this.setTitle("重命名笔记");
-		let inputEl: HTMLInputElement;
-		new Setting(this.contentEl).setName("文件名").addText((text) => {
-			inputEl = text.inputEl;
-			text.setValue(this.value).onChange((value) => (this.value = value));
-			text.inputEl.addEventListener("keydown", (evt) => {
-				if (evt.key === "Enter") void this.submit();
-			});
-		});
-		new Setting(this.contentEl)
-			.addButton((button) => button.setButtonText("取消").onClick(() => this.close()))
-			.addButton((button) =>
-				button
-					.setButtonText("重命名")
-					.setCta()
-					.onClick(() => void this.submit())
-			);
-		window.setTimeout(() => {
-			inputEl.focus();
-			inputEl.select();
-		}, 0);
-	}
-
-	private async submit(): Promise<void> {
-		const value = this.value.trim();
-		if (!value) {
-			new Notice("文件名不能为空");
-			return;
-		}
-		if (/[\\/]/.test(value)) {
-			new Notice("文件名不能包含斜杠");
-			return;
-		}
-		this.close();
-		await this.onSubmit(value);
-	}
-}
-
-function noteActionError(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
 }

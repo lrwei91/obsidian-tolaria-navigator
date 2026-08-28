@@ -8,6 +8,7 @@ import {
 	TFile,
 } from "obsidian";
 import type TolariaNavigatorPlugin from "./main";
+import { SORT_LABELS, SORT_OPTIONS } from "./types";
 import type { FilterKind, SortDirection, SortOption } from "./types";
 
 export type DefaultListKind = Extract<FilterKind, "all" | "inbox" | "archive">;
@@ -75,12 +76,7 @@ const LIST_LABELS: Record<DefaultListKind, string> = {
 	archive: "归档",
 };
 
-const SORT_LABELS: Record<SortOption, string> = {
-	modified: "已修改",
-	created: "创建时间",
-	title: "标题",
-	status: "状态",
-};
+const DEFAULT_LIST_KINDS: DefaultListKind[] = ["all", "inbox", "archive"];
 
 class FolderSuggest extends AbstractInputSuggest<TFolder> {
 	constructor(app: App, private inputEl: HTMLInputElement) {
@@ -258,6 +254,7 @@ export class TolariaNavigatorSettingTab extends PluginSettingTab {
 				dropdown
 					.setValue(this.plugin.settings.defaultList)
 					.onChange(async (value) => {
+						if (!DEFAULT_LIST_KINDS.includes(value as DefaultListKind)) return;
 						this.plugin.settings.defaultList = value as DefaultListKind;
 						await this.plugin.saveSettings();
 					});
@@ -273,6 +270,7 @@ export class TolariaNavigatorSettingTab extends PluginSettingTab {
 				dropdown
 					.setValue(this.plugin.settings.defaultSort)
 					.onChange(async (value) => {
+						if (!(SORT_OPTIONS as string[]).includes(value)) return;
 						this.plugin.settings.defaultSort = value as SortOption;
 						await this.plugin.saveSettings();
 					});
@@ -287,6 +285,7 @@ export class TolariaNavigatorSettingTab extends PluginSettingTab {
 					.addOption("asc", "升序")
 					.setValue(this.plugin.settings.defaultSortDirection)
 					.onChange(async (value) => {
+						if (value !== "asc" && value !== "desc") return;
 						this.plugin.settings.defaultSortDirection = value as SortDirection;
 						await this.plugin.saveSettings();
 					})

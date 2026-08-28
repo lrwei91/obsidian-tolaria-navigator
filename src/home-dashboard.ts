@@ -1,24 +1,13 @@
 import { ItemView, Notice, setIcon, TFile, WorkspaceLeaf } from "obsidian";
 import type TolariaNavigatorPlugin from "./main";
 import type { DashboardTask } from "./settings";
+import { dateKey, todayKey } from "./list-utils";
 
 export const VIEW_TYPE_TOLARIA_HOME = "tolaria-home-dashboard-view";
 
 const DAY_MS = 86_400_000;
 const COLORS = ["#a8a4e6", "#69c7a8", "#e0b341", "#6aa5e0"];
 const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
-
-function dateKey(date: Date): string {
-	return [
-		date.getFullYear(),
-		String(date.getMonth() + 1).padStart(2, "0"),
-		String(date.getDate()).padStart(2, "0"),
-	].join("-");
-}
-
-function todayKey(): string {
-	return dateKey(new Date());
-}
 
 function parseDate(key: string): Date {
 	const [year, month, day] = key.split("-").map(Number);
