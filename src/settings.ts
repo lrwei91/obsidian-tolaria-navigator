@@ -26,6 +26,9 @@ export interface DashboardSettings {
 	favorites: string[];
 	navCollapsed: string[];
 	tasksByDate: Record<string, DashboardTask[]>;
+	navigationRoot: string;
+	bookTitle: string;
+	bookWords: number;
 }
 
 export interface TolariaNavigatorSettings {
@@ -51,6 +54,9 @@ export const DEFAULT_SETTINGS: TolariaNavigatorSettings = {
 		favorites: [],
 		navCollapsed: [],
 		tasksByDate: {},
+		navigationRoot: "notes",
+		bookTitle: "龙族",
+		bookWords: 300000,
 	},
 	defaultList: "all",
 	defaultSort: "modified",
@@ -191,6 +197,52 @@ export class TolariaNavigatorSettingTab extends PluginSettingTab {
 						this.plugin.settings.dashboard.recentLimit = value;
 						await this.plugin.saveSettings();
 						this.plugin.refreshDashboard();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("分类导航根目录")
+			.setDesc("主页控制台“分类导航”扫描的目录，按其一级子目录归类；留空则使用整个仓库。")
+			.addSearch((search) => {
+				new FolderSuggest(this.app, search.inputEl);
+				search
+					.setPlaceholder(DEFAULT_SETTINGS.dashboard.navigationRoot)
+					.setValue(this.plugin.settings.dashboard.navigationRoot)
+					.onChange(async (value) => {
+						this.plugin.settings.dashboard.navigationRoot = normalizeSettingPath(value);
+						await this.plugin.saveSettings();
+						this.plugin.refreshDashboard();
+					});
+			});
+
+		new Setting(containerEl)
+			.setName("总字数换算书目")
+			.setDesc("概览页脚把总字数换算成“约等于几本书”的书名；留空则不显示换算。")
+			.addText((text) =>
+				text
+					.setPlaceholder(DEFAULT_SETTINGS.dashboard.bookTitle)
+					.setValue(this.plugin.settings.dashboard.bookTitle)
+					.onChange(async (value) => {
+						this.plugin.settings.dashboard.bookTitle = value.trim();
+						await this.plugin.saveSettings();
+						this.plugin.refreshDashboard();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("单本书字数")
+			.setDesc("总字数换算使用的单本书字数。")
+			.addText((text) =>
+				text
+					.setPlaceholder(String(DEFAULT_SETTINGS.dashboard.bookWords))
+					.setValue(String(this.plugin.settings.dashboard.bookWords))
+					.onChange(async (value) => {
+						const parsed = Number.parseInt(value, 10);
+						if (Number.isFinite(parsed) && parsed > 0) {
+							this.plugin.settings.dashboard.bookWords = parsed;
+							await this.plugin.saveSettings();
+							this.plugin.refreshDashboard();
+						}
 					})
 			);
 

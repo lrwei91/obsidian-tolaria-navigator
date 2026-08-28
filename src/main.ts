@@ -246,6 +246,20 @@ export default class TolariaNavigatorPlugin extends Plugin {
 				favorites: Array.isArray(dashboard.favorites) ? dashboard.favorites.filter((path): path is string => typeof path === "string") : [],
 				navCollapsed: Array.isArray(dashboard.navCollapsed) ? dashboard.navCollapsed.filter((key): key is string => typeof key === "string") : [],
 				tasksByDate: dashboard.tasksByDate && typeof dashboard.tasksByDate === "object" ? dashboard.tasksByDate : {},
+				navigationRoot:
+					typeof dashboard.navigationRoot === "string"
+						? dashboard.navigationRoot
+						: DEFAULT_SETTINGS.dashboard.navigationRoot,
+				bookTitle:
+					typeof dashboard.bookTitle === "string"
+						? dashboard.bookTitle
+						: DEFAULT_SETTINGS.dashboard.bookTitle,
+				bookWords: this.clampNumber(
+					dashboard.bookWords,
+					1000,
+					10000000,
+					DEFAULT_SETTINGS.dashboard.bookWords
+				),
 			},
 			defaultList: saved?.defaultList ?? DEFAULT_SETTINGS.defaultList,
 			defaultSort: saved?.defaultSort ?? DEFAULT_SETTINGS.defaultSort,

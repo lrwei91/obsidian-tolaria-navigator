@@ -1,5 +1,7 @@
 # Tolaria Navigator
 
+A Tolaria-style sidebar, note list, and home dashboard for Obsidian.
+
 一个 Obsidian 插件，为你的仓库提供 Tolaria 风格的侧边栏、笔记列表与主页控制台。
 
 ## 功能

@@ -3,7 +3,7 @@
   "name": "Tolaria Navigator",
   "version": "1.0.0",
   "minAppVersion": "1.4.0",
-	"description": "Tolaria 风格的侧边栏、笔记列表与主页控制台：导航、统计、日历、日程和收藏。",
+	"description": "Tolaria-style sidebar, note list and home dashboard: navigation, stats, calendar, agenda and favorites.",
   "author": "lrwei91",
   "isDesktopOnly": false
 }

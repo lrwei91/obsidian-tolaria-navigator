@@ -392,9 +392,12 @@ export class HomeDashboardView extends ItemView {
 
 	private footerLine(): string {
 		if (!this.data.totalWordsReady) return "正在统计字数…";
-		const books = Math.max(1, Math.round(this.data.totalWords / 300_000));
+		const { bookTitle, bookWords } = this.plugin.settings.dashboard;
 		const wroteToday = (this.data.createdByDay.get(todayKey())?.length ?? 0) > 0;
-		return `已写下 ${this.data.totalWords.toLocaleString()} 字 · 约等于 ${books} 本《龙族》，${wroteToday ? "今天已经落笔，继续保持。" : "今天的日记还空着。"}`;
+		const tail = wroteToday ? "今天已经落笔，继续保持。" : "今天还没有落笔。";
+		if (!bookTitle) return `已写下 ${this.data.totalWords.toLocaleString()} 字，${tail}`;
+		const books = Math.max(1, Math.round(this.data.totalWords / Math.max(1, bookWords)));
+		return `已写下 ${this.data.totalWords.toLocaleString()} 字 · 约等于 ${books} 本《${bookTitle}》，${tail}`;
 	}
 
 	private heatmap(weeks: number): HTMLElement {
@@ -469,11 +472,18 @@ export class HomeDashboardView extends ItemView {
 
 	private buildNavigation(): NavGroup[] {
 		const groups = new Map<string, TFile[]>();
-		for (const file of this.app.vault.getMarkdownFiles()) {
-			if (!file.path.startsWith("notes/") || file.path === "notes/00-notes-index.md") continue;
+		const root = this.plugin.settings.dashboard.navigationRoot.replace(/\/+$/, "");
+		const prefix = root ? `${root}/` : "";
+		const level = prefix ? 1 : 0;
+		const rootIndexFile = root ? `${root}/00-notes-index.md` : "00-notes-index.md";
+		for (const file of this.data.files) {
+			if (prefix && !file.path.startsWith(prefix)) continue;
+			if (file.path === rootIndexFile) continue;
 			const parts = file.path.split("/");
-			const key = parts.length >= 3 ? parts[1] : "_root";
-			groups.set(key, [...(groups.get(key) ?? []), file]);
+			const key = parts.length > level + 1 ? parts[level] : "_root";
+			const bucket = groups.get(key);
+			if (bucket) bucket.push(file);
+			else groups.set(key, [file]);
 		}
 		const result: NavGroup[] = [];
 		for (const [key, files] of groups) {
@@ -482,11 +492,11 @@ export class HomeDashboardView extends ItemView {
 			const colorIndex = key === "_root" ? 2 : Number.isNaN(number) ? 1 : Math.floor(number / 10) - 1;
 			result.push({
 				key,
-				title: key === "_root" ? "notes 根目录" : key,
+				title: key === "_root" ? (prefix ? `${root} 根目录` : "根目录") : key,
 				color: COLORS[((colorIndex % COLORS.length) + COLORS.length) % COLORS.length],
 				items: files.map((file) => {
 					const summary = this.app.metadataCache.getFileCache(file)?.frontmatter?.["summary"];
-					return { file, title: file.basename, summary: summary ? String(summary) : (file.path.split("/")[2] ?? "") };
+					return { file, title: file.basename, summary: summary ? String(summary) : (file.path.split("/")[level + 1] ?? "") };
 				}),
 			});
 		}
@@ -535,7 +545,8 @@ export class HomeDashboardView extends ItemView {
 			}
 		}
 		const footer = panel.createDiv("ohd-ov-footer");
-		footer.createSpan({ cls: "ohd-foot-text", text: `共 ${total} 篇笔记 · 按 notes 一级目录归类` });
+		const rootLabel = this.plugin.settings.dashboard.navigationRoot.replace(/\/+$/, "") || "库内";
+		footer.createSpan({ cls: "ohd-foot-text", text: `共 ${total} 篇笔记 · 按 ${rootLabel} 一级目录归类` });
 	}
 
 	private toggleNavigationGroup(key: string): void {
