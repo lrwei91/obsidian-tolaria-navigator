@@ -128,9 +128,19 @@ class DashboardData {
 		this.longestStreak = this.calculateLongestStreak(modified);
 	}
 
-	async computeWords(): Promise<void> {
+	async computeWords(shouldContinue?: () => boolean): Promise<void> {
 		let total = 0;
-		for (const file of this.files) total += await this.view.countWords(file);
+		const CHUNK = 25;
+		for (let index = 0; index < this.files.length; index += CHUNK) {
+			for (const file of this.files.slice(index, index + CHUNK)) {
+				total += await this.view.countWords(file);
+			}
+			if (shouldContinue && !shouldContinue()) return;
+			if (index + CHUNK < this.files.length) {
+				// 大库首次统计分块让出主线程，避免长时间阻塞 UI
+				await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+			}
+		}
 		this.totalWords = total;
 		this.totalWordsReady = true;
 	}
@@ -186,6 +196,7 @@ export class HomeDashboardView extends ItemView {
 	private wordCache = new Map<string, { mtime: number; count: number }>();
 	private toastEl: HTMLElement | null = null;
 	private toastTimer = 0;
+	private resizeTimer = 0;
 	private renderGeneration = 0;
 
 	constructor(leaf: WorkspaceLeaf, private plugin: TolariaNavigatorPlugin) {
@@ -211,11 +222,33 @@ export class HomeDashboardView extends ItemView {
 
 	async onClose(): Promise<void> {
 		window.clearTimeout(this.toastTimer);
+		window.clearTimeout(this.resizeTimer);
 	}
 
 	onResize(): void {
 		super.onResize();
+		// 热力图整块重建开销大，resize 抖动期间合并成一次
+		window.clearTimeout(this.resizeTimer);
+		this.resizeTimer = window.setTimeout(() => this.renderOverview(), 150);
+	}
+
+	/** 内容编辑后的轻量刷新：跳过分类导航与收藏面板，只重建受时间影响的视图。 */
+	refreshChanged(_files: TFile[]): void {
+		const generation = ++this.renderGeneration;
+		const previousWords = this.data.totalWords;
+		const previousWordsReady = this.data.totalWordsReady;
+		const previousCache = new Map(this.wordCache);
+		const data = new DashboardData(this);
+		this.data = data;
+		data.computeQuick();
+		if (previousWordsReady) {
+			data.totalWords = previousWords;
+			data.totalWordsReady = true;
+		}
 		this.renderOverview();
+		this.renderRecent();
+		this.renderCalendar();
+		void this.applyWordDeltas(data, previousCache, generation);
 	}
 
 	refresh(recomputeWords = true): void {
@@ -236,9 +269,13 @@ export class HomeDashboardView extends ItemView {
 		}
 		this.renderAll();
 		if (recomputeWords || !previousWordsReady) {
-			void data.computeWords().then(() => {
-				if (generation === this.renderGeneration && this.data === data) this.renderOverview();
-			});
+			void data
+				.computeWords(
+					() => generation === this.renderGeneration && this.data === data
+				)
+				.then(() => {
+					if (generation === this.renderGeneration && this.data === data) this.renderOverview();
+				});
 		} else {
 			// 编辑后按增量修正总字数，而不是沿用旧值
 			void this.applyWordDeltas(data, previousCache, generation);
@@ -404,6 +441,12 @@ export class HomeDashboardView extends ItemView {
 		const wrap = document.createElement("div");
 		wrap.className = "ohd-heat-scroll";
 		const heat = wrap.createDiv("ohd-heat");
+		// 事件委托：371 个格子只挂一个监听器
+		heat.addEventListener("click", (event) => {
+			const cell = (event.target as HTMLElement).closest<HTMLElement>(".ohd-cell");
+			const key = cell?.dataset.date;
+			if (key && cell && !cell.classList.contains("is-future")) this.selectDate(key);
+		});
 		const monday = this.plugin.settings.dashboard.weekStartsMonday;
 		const now = new Date();
 		const offset = monday ? (now.getDay() + 6) % 7 : now.getDay();
@@ -422,7 +465,7 @@ export class HomeDashboardView extends ItemView {
 				const cell = column.createDiv(`ohd-cell ohd-l${level}${future ? " is-future" : ""}${key === this.selectedDate && !future ? " is-selected" : ""}`);
 				if (!future) {
 					cell.title = `${key} · ${count} 篇`;
-					cell.addEventListener("click", () => this.selectDate(key));
+					cell.dataset.date = key;
 				}
 			}
 		}
@@ -515,7 +558,7 @@ export class HomeDashboardView extends ItemView {
 		const button = control.createEl("button", { cls: `ohd-seg-btn${allCollapsed ? " is-active" : ""}`, text: allCollapsed ? "全部展开" : "全部折叠" });
 		button.addEventListener("click", () => {
 			this.plugin.settings.dashboard.navCollapsed = allCollapsed ? [] : groups.map((group) => group.key);
-			void this.plugin.saveSettings();
+			this.plugin.saveSettingsSoon();
 			this.renderNavigation();
 		});
 		panel.append(this.header("compass", "分类导航", "Notes Navigator", control));
@@ -552,7 +595,7 @@ export class HomeDashboardView extends ItemView {
 	private toggleNavigationGroup(key: string): void {
 		const collapsed = this.plugin.settings.dashboard.navCollapsed;
 		this.plugin.settings.dashboard.navCollapsed = collapsed.includes(key) ? collapsed.filter((value) => value !== key) : [...collapsed, key];
-		void this.plugin.saveSettings();
+		this.plugin.saveSettingsSoon();
 		this.renderNavigation();
 	}
 
@@ -568,12 +611,17 @@ export class HomeDashboardView extends ItemView {
 		}
 		panel.append(this.header("calendar-days", "日历", `${this.calendarYear} 年 ${this.calendarMonth + 1} 月`, controls));
 		const grid = panel.createDiv("ohd-cal-grid");
+		grid.addEventListener("click", (event) => {
+			const cell = (event.target as HTMLElement).closest<HTMLElement>(".ohd-day");
+			const key = cell?.dataset.date;
+			if (key) this.selectDate(key);
+		});
 		const labels = this.plugin.settings.dashboard.weekStartsMonday ? ["一", "二", "三", "四", "五", "六", "日"] : WEEKDAYS;
 		for (const label of labels) grid.createDiv({ cls: "ohd-wd", text: label });
 		for (const day of this.calendarDays()) {
 			const classes = ["ohd-day", !day.inMonth ? "is-outside" : "", day.key === todayKey() ? "is-today" : "", day.key === this.selectedDate ? "is-selected" : ""].filter(Boolean).join(" ");
 			const cell = grid.createDiv({ cls: classes, text: String(day.date.getDate()) });
-			cell.addEventListener("click", () => this.selectDate(day.key));
+			cell.dataset.date = day.key;
 			if (day.inMonth && (this.data.countByDay.get(day.key) ?? 0) > 0) cell.createSpan("ohd-day-dot");
 		}
 		const footer = panel.createDiv("ohd-cal-foot");
@@ -667,7 +715,7 @@ export class HomeDashboardView extends ItemView {
 		const task = this.plugin.settings.dashboard.tasksByDate[this.selectedDate]?.find((item) => item.id === id);
 		if (!task) return;
 		task.done = !task.done;
-		void this.plugin.saveSettings();
+		this.plugin.saveSettingsSoon();
 		this.renderAgenda();
 	}
 
@@ -676,7 +724,7 @@ export class HomeDashboardView extends ItemView {
 		const next = (byDate[this.selectedDate] ?? []).filter((task) => task.id !== id);
 		if (next.length) byDate[this.selectedDate] = next;
 		else delete byDate[this.selectedDate];
-		void this.plugin.saveSettings();
+		this.plugin.saveSettingsSoon();
 		this.renderAgenda();
 	}
 
@@ -688,7 +736,7 @@ export class HomeDashboardView extends ItemView {
 		tasks.push({ id: uniqueId("task"), time: match?.[1] ?? "", text: match?.[2] ?? value, done: false });
 		tasks.sort((a, b) => (a.time || "99:99").localeCompare(b.time || "99:99"));
 		this.plugin.settings.dashboard.tasksByDate[this.selectedDate] = tasks;
-		void this.plugin.saveSettings();
+		this.plugin.saveSettingsSoon();
 		this.renderAgenda();
 		this.showToast("已添加日程 ✦");
 		this.panels.agenda?.querySelector<HTMLInputElement>(".ohd-add-input")?.focus();

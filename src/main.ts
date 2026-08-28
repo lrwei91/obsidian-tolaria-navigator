@@ -1,5 +1,6 @@
 import {
 	Debouncer,
+	getAllTags,
 	MarkdownView,
 	Notice,
 	Plugin,
@@ -15,7 +16,7 @@ import {
 	HomeDashboardView,
 	VIEW_TYPE_TOLARIA_HOME,
 } from "./home-dashboard";
-import { NoteFilter } from "./types";
+import { isArchivedCache, isOrganizedCache, NoteFilter, normalizeTag } from "./types";
 import { VaultService } from "./vault-service";
 import { removePathsWithin, replacePathPrefix } from "./path-utils";
 import { DesktopAdapter } from "./desktop-adapter";
@@ -42,11 +43,17 @@ export default class TolariaNavigatorPlugin extends Plugin {
 	private editorGroupLeaf: WorkspaceLeaf | null = null;
 	private refreshAll!: Debouncer<[], void>;
 	private refreshChanged!: Debouncer<[], void>;
+	private persistSettings!: Debouncer<[], Promise<void>>;
+	private settingsDirty = false;
 	private changedFiles = new Map<string, TFile>();
 	private layoutReady = false;
+	private lastLayoutCheck = 0;
+	private pinnedPaths = new Set<string>();
+	private sidebarMetaCache = new Map<string, string>();
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
+		this.pinnedPaths = new Set(this.settings.pinnedNotePaths);
 		this.collapsedGroups = new Set(this.settings.collapsedSidebarGroups);
 		this.folderExpansion = new Map(
 			Object.entries(this.settings.folderExpansionState)
@@ -56,6 +63,10 @@ export default class TolariaNavigatorPlugin extends Plugin {
 		this.currentFilter = this.defaultFilter();
 		this.refreshAll = debounce(() => this.doRefresh(), 600);
 		this.refreshChanged = debounce(() => this.doChangedFileRefresh(), 220);
+		this.persistSettings = debounce(async () => {
+			this.settingsDirty = false;
+			await this.saveSettings();
+		}, 800);
 
 		this.registerView(
 			VIEW_TYPE_TOLARIA_SIDEBAR,
@@ -216,6 +227,7 @@ export default class TolariaNavigatorPlugin extends Plugin {
 	onunload(): void {
 		this.refreshAll.cancel();
 		this.refreshChanged.cancel();
+		if (this.settingsDirty) void this.saveSettings();
 		this.editorGroupLeaf = null;
 	}
 
@@ -312,6 +324,12 @@ export default class TolariaNavigatorPlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
+	/** 高频路径（折叠/置顶/日程等）的防抖持久化，卸载时会 flush。 */
+	saveSettingsSoon(): void {
+		this.settingsDirty = true;
+		this.persistSettings();
+	}
+
 	private async migrateLegacyFavoriteFlags(): Promise<boolean> {
 		if (this.settings.legacyFavoriteFlagsMigrated) return true;
 		const files = this.app.vault.getMarkdownFiles();
@@ -346,7 +364,7 @@ export default class TolariaNavigatorPlugin extends Plugin {
 			this.collapsedGroups.add(key);
 		}
 		this.settings.collapsedSidebarGroups = [...this.collapsedGroups];
-		await this.saveSettings();
+		this.saveSettingsSoon();
 	}
 
 	async setFolderExpanded(path: string, expanded: boolean): Promise<void> {
@@ -354,7 +372,7 @@ export default class TolariaNavigatorPlugin extends Plugin {
 		this.settings.folderExpansionState = Object.fromEntries(
 			this.folderExpansion
 		);
-		await this.saveSettings();
+		this.saveSettingsSoon();
 	}
 
 	async createNoteInFolder(folderPath: string): Promise<TFile> {
@@ -407,37 +425,35 @@ export default class TolariaNavigatorPlugin extends Plugin {
 	}
 
 	isNotePinned(path: string): boolean {
-		return this.settings.pinnedNotePaths.includes(path);
+		return this.pinnedPaths.has(path);
+	}
+
+	private syncPinnedPaths(): void {
+		this.settings.pinnedNotePaths = [...this.pinnedPaths];
 	}
 
 	async togglePinnedNote(path: string): Promise<void> {
-		if (this.isNotePinned(path)) {
-			this.settings.pinnedNotePaths = this.settings.pinnedNotePaths.filter(
-				(pinnedPath) => pinnedPath !== path
-			);
+		if (this.pinnedPaths.has(path)) {
+			this.pinnedPaths.delete(path);
 		} else {
-			this.settings.pinnedNotePaths = [
-				...this.settings.pinnedNotePaths,
-				path,
-			];
+			this.pinnedPaths.add(path);
 		}
-		await this.saveSettings();
+		this.syncPinnedPaths();
+		this.saveSettingsSoon();
 	}
 
 	async replacePinnedNotePath(oldPath: string, newPath: string): Promise<void> {
-		if (!this.isNotePinned(oldPath)) return;
-		this.settings.pinnedNotePaths = this.settings.pinnedNotePaths.map((path) =>
-			path === oldPath ? newPath : path
-		);
-		await this.saveSettings();
+		if (!this.pinnedPaths.has(oldPath)) return;
+		this.pinnedPaths.delete(oldPath);
+		this.pinnedPaths.add(newPath);
+		this.syncPinnedPaths();
+		this.saveSettingsSoon();
 	}
 
 	async removePinnedNote(path: string): Promise<void> {
-		if (!this.isNotePinned(path)) return;
-		this.settings.pinnedNotePaths = this.settings.pinnedNotePaths.filter(
-			(pinnedPath) => pinnedPath !== path
-		);
-		await this.saveSettings();
+		if (!this.pinnedPaths.delete(path)) return;
+		this.syncPinnedPaths();
+		this.saveSettingsSoon();
 	}
 
 	private async handlePathRename(
@@ -446,13 +462,15 @@ export default class TolariaNavigatorPlugin extends Plugin {
 	): Promise<void> {
 		this.service.invalidateExcerpt(oldPath);
 		this.service.invalidateExcerpt(newPath);
-		const pinned = this.settings.pinnedNotePaths.map((path) =>
-			replacePathPrefix(path, oldPath, newPath)
-		);
+		const nextPinned = new Set<string>();
+		for (const path of this.pinnedPaths) {
+			nextPinned.add(replacePathPrefix(path, oldPath, newPath));
+		}
+		this.pinnedPaths = nextPinned;
+		this.syncPinnedPaths();
 		const favorites = this.settings.dashboard.favorites.map((path) =>
 			replacePathPrefix(path, oldPath, newPath)
 		);
-		this.settings.pinnedNotePaths = [...new Set(pinned)];
 		this.settings.dashboard.favorites = [...new Set(favorites)];
 
 		if (this.currentFilter?.kind === "folder") {
@@ -471,17 +489,24 @@ export default class TolariaNavigatorPlugin extends Plugin {
 		this.settings.folderExpansionState = Object.fromEntries(
 			this.folderExpansion
 		);
-		await this.saveSettings();
+		const meta = this.sidebarMetaCache.get(oldPath);
+		if (meta !== undefined) {
+			this.sidebarMetaCache.delete(oldPath);
+			this.sidebarMetaCache.set(newPath, meta);
+		}
+		this.saveSettingsSoon();
 		this.refreshAll();
 	}
 
 	private async handlePathDelete(path: string): Promise<void> {
 		this.service.invalidateExcerpt(path);
-		const pinned = removePathsWithin(this.settings.pinnedNotePaths, path);
+		this.sidebarMetaCache.delete(path);
+		const pinned = removePathsWithin([...this.pinnedPaths], path);
 		const favorites = removePathsWithin(
 			this.settings.dashboard.favorites,
 			path
 		);
+		this.pinnedPaths = new Set(pinned);
 		this.settings.pinnedNotePaths = pinned;
 		this.settings.dashboard.favorites = favorites;
 		if (
@@ -498,7 +523,7 @@ export default class TolariaNavigatorPlugin extends Plugin {
 		this.settings.folderExpansionState = Object.fromEntries(
 			this.folderExpansion
 		);
-		await this.saveSettings();
+		this.saveSettingsSoon();
 		this.refreshAll();
 	}
 
@@ -725,6 +750,16 @@ export default class TolariaNavigatorPlugin extends Plugin {
 	async ensureLayout(openHome: boolean): Promise<WorkspaceLeaf | null> {
 		const workspace = this.app.workspace;
 
+		// 打开笔记等高频调用：刚校验过布局且右侧组仍挂载时直接复用，跳过修复扫描
+		if (Date.now() - this.lastLayoutCheck < 1500) {
+			const existing = workspace
+				.getLeavesOfType(VIEW_TYPE_TOLARIA_LIST)
+				.first();
+			if (existing && this.isAttachedLeaf(this.editorGroupLeaf)) {
+				return existing;
+			}
+		}
+
 		const listLeaves = workspace.getLeavesOfType(VIEW_TYPE_TOLARIA_LIST);
 		for (let i = 1; i < listLeaves.length; i++) {
 			listLeaves[i].detach();
@@ -775,6 +810,7 @@ export default class TolariaNavigatorPlugin extends Plugin {
 			this.pinHomeTab(editorGroup);
 		}
 
+		this.lastLayoutCheck = Date.now();
 		return listLeaf;
 	}
 
@@ -796,17 +832,39 @@ export default class TolariaNavigatorPlugin extends Plugin {
 		const files = [...this.changedFiles.values()];
 		this.changedFiles.clear();
 		if (!files.length) return;
-		for (const leaf of this.app.workspace.getLeavesOfType(
-			VIEW_TYPE_TOLARIA_SIDEBAR
-		)) {
-			(leaf.view as SidebarView).refresh();
+		// 纯内容编辑不影响侧边栏的归档/整理/标签统计，跳过其全量重建
+		const metaChanged = files.some((file) => this.sidebarSignatureChanged(file));
+		if (metaChanged) {
+			for (const leaf of this.app.workspace.getLeavesOfType(
+				VIEW_TYPE_TOLARIA_SIDEBAR
+			)) {
+				(leaf.view as SidebarView).refresh();
+			}
 		}
 		for (const leaf of this.app.workspace.getLeavesOfType(
 			VIEW_TYPE_TOLARIA_LIST
 		)) {
 			(leaf.view as NoteListView).refreshFiles(files);
 		}
-		this.refreshDashboard();
+		this.refreshDashboardChanged(files);
+	}
+
+	/** 侧边栏统计只依赖归档/整理标记与标签，用签名比较避免无谓刷新。 */
+	private sidebarSignature(file: TFile): string {
+		const cache = this.app.metadataCache.getFileCache(file);
+		const tags = (cache ? getAllTags(cache) ?? [] : [])
+			.map((tag) => normalizeTag(tag))
+			.filter(Boolean)
+			.sort()
+			.join(",");
+		return `${isArchivedCache(cache) ? 1 : 0}|${isOrganizedCache(cache) ? 1 : 0}|${tags}`;
+	}
+
+	private sidebarSignatureChanged(file: TFile): boolean {
+		const next = this.sidebarSignature(file);
+		const previous = this.sidebarMetaCache.get(file.path);
+		this.sidebarMetaCache.set(file.path, next);
+		return previous === undefined || previous !== next;
 	}
 
 	private activeListView(): NoteListView | null {
@@ -823,6 +881,14 @@ export default class TolariaNavigatorPlugin extends Plugin {
 			VIEW_TYPE_TOLARIA_HOME
 		)) {
 			(leaf.view as HomeDashboardView).refresh(recomputeWords);
+		}
+	}
+
+	private refreshDashboardChanged(files: TFile[]): void {
+		for (const leaf of this.app.workspace.getLeavesOfType(
+			VIEW_TYPE_TOLARIA_HOME
+		)) {
+			(leaf.view as HomeDashboardView).refreshChanged(files);
 		}
 	}
 
