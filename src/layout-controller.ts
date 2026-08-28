@@ -1,4 +1,9 @@
-import { MarkdownView, TFile, WorkspaceLeaf, WorkspaceTabs } from "obsidian";
+import {
+	MarkdownView,
+	TFile,
+	WorkspaceLeaf,
+	WorkspaceTabs,
+} from "obsidian";
 import type TolariaNavigatorPlugin from "./main";
 import { VIEW_TYPE_TOLARIA_HOME } from "./home-dashboard";
 import { VIEW_TYPE_TOLARIA_LIST } from "./note-list";
@@ -36,22 +41,42 @@ export class LayoutController {
 	}
 
 	/** 始终在右侧文档标签组打开文件；存在主页控制台时通过它定位标签组。 */
-	async openNoteInEditorGroup(file: TFile): Promise<boolean> {
-		const dashboard = this.plugin.app.workspace
+	async openNoteInEditorGroup(
+		file: TFile,
+		listLeaf: WorkspaceLeaf
+	): Promise<boolean> {
+		const workspace = this.plugin.app.workspace;
+		const dashboard = workspace
 			.getLeavesOfType(VIEW_TYPE_TOLARIA_HOME)
-			.first();
+			.find((leaf) => this.isSiblingGroupLeaf(leaf, listLeaf));
 		if (dashboard) {
-			await this.plugin.app.workspace.revealLeaf(dashboard);
-			this.plugin.app.workspace.setActiveLeaf(dashboard, { focus: true });
+			await workspace.revealLeaf(dashboard);
+			workspace.setActiveLeaf(dashboard, { focus: true });
 			await new Promise<void>((resolve) =>
 				window.requestAnimationFrame(() => resolve())
 			);
 			await this.openInTabGroup(file, dashboard);
 			return true;
 		}
-		const editorGroup = this.editorGroupLeaf;
-		if (!this.isAttachedLeaf(editorGroup)) return false;
-		await this.openInTabGroup(file, editorGroup);
+
+		const editorGroup = this.isAttachedLeaf(this.editorGroupLeaf)
+			? this.editorGroupLeaf
+			: this.findEditorGroupLeaf(listLeaf);
+		if (this.isAttachedLeaf(editorGroup)) {
+			await this.openInTabGroup(file, editorGroup);
+			return true;
+		}
+
+		// “启动时打开主页”关闭时，空白右侧 leaf 可能被 Obsidian 自动回收。
+		// 此处直接创建持久的文档 leaf，避免继续依赖已经失效的缓存引用。
+		const editor = workspace.createLeafBySplit(listLeaf, "vertical", false);
+		await editor.setViewState({
+			type: "markdown",
+			state: { file: file.path },
+			active: true,
+		});
+		this.editorGroupLeaf = editor;
+		workspace.setActiveLeaf(editor, { focus: true });
 		return true;
 	}
 
@@ -114,6 +139,7 @@ export class LayoutController {
 			this.cleanupEmptyMainGroups(listLeaf, editorGroup);
 		}
 		editorGroup = await this.repairListGroup(listLeaf, editorGroup);
+		editorGroup = await this.mergeExtraDocumentGroups(listLeaf, editorGroup);
 		this.cleanupMalformedDashboardLeaves(listLeaf, editorGroup);
 		this.editorGroupLeaf = editorGroup;
 
@@ -144,8 +170,16 @@ export class LayoutController {
 			this.plugin.app.workspace.setActiveLeaf(existing, { focus: true });
 			return;
 		}
-		const editor = this.createTabInGroup(host);
-		await editor.openFile(file);
+		const editor = host.view.getViewType() === "empty" ? host : this.createTabInGroup(host);
+		if (host.view.getViewType() === "empty") {
+			await editor.setViewState({
+				type: "markdown",
+				state: { file: file.path },
+				active: true,
+			});
+		} else {
+			await editor.openFile(file);
+		}
 		this.editorGroupLeaf = editor;
 		this.plugin.app.workspace.setActiveLeaf(editor, { focus: true });
 	}
@@ -156,9 +190,14 @@ export class LayoutController {
 	}
 
 	private allWorkspaceLeaves(): WorkspaceLeaf[] {
-		const leaves: WorkspaceLeaf[] = [];
-		this.plugin.app.workspace.iterateAllLeaves((leaf) => leaves.push(leaf));
-		return leaves;
+		const leaves = new Set<WorkspaceLeaf>();
+		this.plugin.app.workspace.iterateAllLeaves((leaf) => leaves.add(leaf));
+		// Obsidian 1.13.x 的 iterateAllLeaves 不会稳定包含 empty 视图；
+		// 关闭“启动时打开主页”后，右侧占位标签正是这种 leaf。
+		for (const leaf of this.plugin.app.workspace.getLeavesOfType("empty")) {
+			leaves.add(leaf);
+		}
+		return [...leaves];
 	}
 
 	private isAttachedLeaf(leaf: WorkspaceLeaf | null): leaf is WorkspaceLeaf {
@@ -172,30 +211,24 @@ export class LayoutController {
 	}
 
 	private findEditorGroupLeaf(listLeaf: WorkspaceLeaf): WorkspaceLeaf | null {
-		const root = listLeaf.getRoot();
 		const dashboard = this.plugin.app.workspace
 			.getLeavesOfType(VIEW_TYPE_TOLARIA_HOME)
-			.find(
-				(leaf) =>
-					leaf.parent instanceof WorkspaceTabs &&
-					leaf.parent !== listLeaf.parent &&
-					leaf.getRoot() === root
-			);
+			.find((leaf) => this.isSiblingGroupLeaf(leaf, listLeaf));
 		if (dashboard) return dashboard;
 		if (
 			this.isAttachedLeaf(this.editorGroupLeaf) &&
-			this.editorGroupLeaf.parent instanceof WorkspaceTabs &&
-			this.editorGroupLeaf.parent !== listLeaf.parent &&
-			this.editorGroupLeaf.getRoot() === root
+			this.isSiblingGroupLeaf(this.editorGroupLeaf, listLeaf)
 		) {
 			return this.editorGroupLeaf;
 		}
-		const candidates = this.allWorkspaceLeaves().filter(
+		const candidates = [
+			...this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_TOLARIA_HOME),
+			...this.plugin.app.workspace.getLeavesOfType("markdown"),
+			...this.plugin.app.workspace.getLeavesOfType("empty"),
+		].filter(
 			(leaf) =>
 				leaf !== listLeaf &&
-				leaf.parent instanceof WorkspaceTabs &&
-				leaf.parent !== listLeaf.parent &&
-				leaf.getRoot() === root &&
+				this.isSiblingGroupLeaf(leaf, listLeaf) &&
 				leaf.view.getViewType() !== VIEW_TYPE_TOLARIA_SIDEBAR
 		);
 		// 优先复用有内容的标签组；右侧只剩空白新标签页时也直接复用，避免重复分栏
@@ -203,6 +236,17 @@ export class LayoutController {
 			candidates.find((leaf) => leaf.view.getViewType() !== "empty") ??
 			candidates.find((leaf) => leaf.view.getViewType() === "empty") ??
 			null
+		);
+	}
+
+	private isSiblingGroupLeaf(
+		leaf: WorkspaceLeaf,
+		listLeaf: WorkspaceLeaf
+	): boolean {
+		return (
+			leaf.parent instanceof WorkspaceTabs &&
+			listLeaf.parent instanceof WorkspaceTabs &&
+			leaf.parent !== listLeaf.parent
 		);
 	}
 
@@ -228,7 +272,7 @@ export class LayoutController {
 		)) {
 			if (
 				leaf !== editorGroup &&
-				leaf.getRoot() === listLeaf.getRoot() &&
+				leaf.getContainer() === listLeaf.getContainer() &&
 				!(leaf.parent instanceof WorkspaceTabs)
 			) {
 				leaf.detach();
@@ -289,18 +333,51 @@ export class LayoutController {
 		return dashboard ?? editorGroup;
 	}
 
+	/** 将误建成独立分栏的文档收回右侧标签组，保持主区始终只有两栏。 */
+	private async mergeExtraDocumentGroups(
+		listLeaf: WorkspaceLeaf,
+		editorGroup: WorkspaceLeaf
+	): Promise<WorkspaceLeaf> {
+		const extras = this.plugin.app.workspace
+			.getLeavesOfType("markdown")
+			.filter(
+				(leaf) =>
+					leaf.parent !== editorGroup.parent &&
+					this.isSiblingGroupLeaf(leaf, listLeaf) &&
+					leaf.view instanceof MarkdownView &&
+					leaf.view.file
+			);
+		for (const leaf of extras) {
+			const file = (leaf.view as MarkdownView).file;
+			if (!file) continue;
+			const existing = this.plugin.app.workspace
+				.getLeavesOfType("markdown")
+				.find(
+					(candidate) =>
+						candidate.parent === editorGroup.parent &&
+						candidate.view instanceof MarkdownView &&
+						candidate.view.file?.path === file.path
+				);
+			if (!existing) {
+				const target = this.createTabInGroup(editorGroup);
+				await target.openFile(file);
+			}
+			leaf.detach();
+		}
+		return editorGroup;
+	}
+
 	/** 清理旧版本误建的主区空白分栏，不触碰包含文档或自定义视图的分栏。 */
 	private cleanupEmptyMainGroups(
 		listLeaf: WorkspaceLeaf,
 		editorGroup: WorkspaceLeaf
 	): void {
-		const mainRoot = listLeaf.getRoot();
-		if (editorGroup.getRoot() !== mainRoot) return;
+		if (!this.isSiblingGroupLeaf(editorGroup, listLeaf)) return;
 		for (const leaf of this.allWorkspaceLeaves()) {
 			if (
 				leaf.parent !== listLeaf.parent &&
 				leaf.parent !== editorGroup.parent &&
-				leaf.getRoot() === mainRoot &&
+				this.isSiblingGroupLeaf(leaf, listLeaf) &&
 				leaf.view.getViewType() === "empty"
 			) {
 				leaf.detach();

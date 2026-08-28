@@ -383,7 +383,7 @@ export class NoteListView extends ItemView {
 		virtualWindow.style.transform = `translateY(${start * VIRTUAL_ROW_HEIGHT}px)`;
 		for (let index = start; index < end; index++) {
 			const row = virtualWindow.createDiv(
-				`tol-virtual-row${index > 0 ? " has-divider" : ""}`
+				`tol-virtual-row${index < this.visibleFiles.length - 1 ? " has-divider" : ""}`
 			);
 			row.style.height = `${VIRTUAL_ROW_HEIGHT}px`;
 			row.setAttribute("role", "option");
@@ -391,9 +391,6 @@ export class NoteListView extends ItemView {
 				"aria-selected",
 				String(this.visibleFiles[index].path === this.selectedPath)
 			);
-			if (index > 0) {
-				row.createDiv("tol-card-divider");
-			}
 			this.renderCard(row, this.visibleFiles[index]);
 		}
 		this.highlightActiveFile();

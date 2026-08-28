@@ -662,7 +662,7 @@ export default class TolariaNavigatorPlugin extends Plugin {
 				new Notice("Tolaria：找不到笔记列表区域");
 				return;
 			}
-			if (!(await this.layout.openNoteInEditorGroup(file))) {
+			if (!(await this.layout.openNoteInEditorGroup(file, listLeaf))) {
 				new Notice("Tolaria：找不到右侧文档标签组");
 			}
 		} catch (error) {

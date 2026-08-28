@@ -20,7 +20,6 @@
 	--tol-text-subtle: var(--text-faint);
 	--tol-border: var(--background-modifier-border);
 	--tol-border-strong: var(--background-modifier-border-hover);
-	--tol-divider: var(--text-faint);
 	--tol-accent: var(--interactive-accent);
 	--tol-accent-tint: color-mix(in srgb, var(--interactive-accent) 14%, var(--background-primary));
 	--tol-on-accent: var(--text-on-accent);
@@ -414,6 +413,14 @@
 	box-sizing: border-box;
 }
 
+.tol-virtual-row.has-divider .tol-card {
+	border-bottom: 1px solid color-mix(
+		in srgb,
+		var(--text-normal) 28%,
+		var(--background-primary)
+	);
+}
+
 .tol-card {
 	position: relative;
 	display: flex;
@@ -422,17 +429,6 @@
 	padding: 14px 16px;
 	cursor: pointer;
 	transition: background-color 120ms var(--tol-ease);
-}
-
-/* 卡片之间的横向分隔线：作为行内首个子元素出现在每行顶部（非绝对定位，
-   绝对定位会被后绘制的卡片盖住导致线不可见） */
-.tol-card-divider {
-	height: 1px;
-	margin: 0 16px;
-	background-color: var(--tol-divider);
-	opacity: 0.72;
-	flex: 0 0 1px;
-	pointer-events: none;
 }
 
 .tol-card:hover {
@@ -1337,4 +1333,3 @@
 			transform: translate(-50%, 0);
 		}
 }
-
