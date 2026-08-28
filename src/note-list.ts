@@ -395,11 +395,7 @@ export class NoteListView extends ItemView {
 				String(this.visibleFiles[index].path === this.selectedPath)
 			);
 			if (index > 0) {
-				const divider = row.createDiv("tol-card-divider");
-				divider.style.height = "1px";
-				divider.style.margin = "0 16px";
-				divider.style.backgroundColor = "var(--text-faint)";
-				divider.style.opacity = "0.72";
+				row.createDiv("tol-card-divider");
 			}
 			this.renderCard(row, this.visibleFiles[index]);
 		}

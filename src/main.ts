@@ -43,6 +43,7 @@ export default class TolariaNavigatorPlugin extends Plugin {
 	private refreshAll!: Debouncer<[], void>;
 	private refreshChanged!: Debouncer<[], void>;
 	private changedFiles = new Map<string, TFile>();
+	private layoutReady = false;
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
@@ -127,7 +128,13 @@ export default class TolariaNavigatorPlugin extends Plugin {
 			callback: () => this.activeListView()?.showSelectedMenu(),
 		});
 
-		this.registerEvent(this.app.vault.on("create", () => this.refreshAll()));
+		this.registerEvent(
+			this.app.vault.on("create", (file) => {
+				// 文件夹和启动索引阶段也会触发 create，过滤后避免启动刷新风暴
+				if (!(file instanceof TFile) || !this.layoutReady) return;
+				this.refreshAll();
+			})
+		);
 		this.registerEvent(
 			this.app.vault.on("delete", (file) => {
 				void this.handlePathDelete(file.path);
@@ -150,12 +157,14 @@ export default class TolariaNavigatorPlugin extends Plugin {
 				);
 			})
 		);
-		this.registerEvent(
-			this.app.metadataCache.on("resolved", () => {
-				void this.migrateLegacyFavoriteFlags();
+		const resolvedRef = this.app.metadataCache.on("resolved", () => {
+			void this.migrateLegacyFavoriteFlags().then((done) => {
+				// 一次性迁移：完成后注销监听，避免 "resolved" 每次触发都跑一遍
+				if (done) this.app.metadataCache.offref(resolvedRef);
 				this.refreshAll();
-			})
-		);
+			});
+		});
+		this.registerEvent(resolvedRef);
 		this.registerEvent(
 			this.app.metadataCache.on("changed", (file) => {
 				this.service.invalidateExcerpt(file.path);
@@ -179,15 +188,16 @@ export default class TolariaNavigatorPlugin extends Plugin {
 					leaf?.view instanceof MarkdownView
 						? (leaf.view.file?.path ?? null)
 						: (this.app.workspace.getActiveFile()?.path ?? null);
-				for (const leaf of this.app.workspace.getLeavesOfType(
+				for (const listLeaf of this.app.workspace.getLeavesOfType(
 					VIEW_TYPE_TOLARIA_LIST
 				)) {
-					(leaf.view as NoteListView).highlightActiveFile(activePath);
+					(listLeaf.view as NoteListView).highlightActiveFile(activePath);
 				}
 			})
 		);
 
 		this.app.workspace.onLayoutReady(() => {
+			this.layoutReady = true;
 			void this.migrateLegacyFavoriteFlags();
 			const fixLayout = () => {
 				void this.ensureLayout(this.settings.openHomeOnStartup).then(() =>
@@ -204,6 +214,8 @@ export default class TolariaNavigatorPlugin extends Plugin {
 	}
 
 	onunload(): void {
+		this.refreshAll.cancel();
+		this.refreshChanged.cancel();
 		this.editorGroupLeaf = null;
 	}
 
@@ -286,13 +298,13 @@ export default class TolariaNavigatorPlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
-	private async migrateLegacyFavoriteFlags(): Promise<void> {
-		if (this.settings.legacyFavoriteFlagsMigrated) return;
+	private async migrateLegacyFavoriteFlags(): Promise<boolean> {
+		if (this.settings.legacyFavoriteFlagsMigrated) return true;
 		const files = this.app.vault.getMarkdownFiles();
 		const cachedFiles = files.filter((file) =>
 			this.app.metadataCache.getFileCache(file)
 		);
-		if (files.length > 0 && cachedFiles.length === 0) return;
+		if (files.length > 0 && cachedFiles.length === 0) return false;
 		const legacyFavorites = cachedFiles
 			.filter(
 				(file) =>
@@ -310,6 +322,7 @@ export default class TolariaNavigatorPlugin extends Plugin {
 		this.settings.legacyFavoriteFlagsMigrated = true;
 		await this.saveSettings();
 		this.refreshDashboard();
+		return true;
 	}
 
 	async toggleSidebarGroup(key: string): Promise<void> {
@@ -808,12 +821,12 @@ export default class TolariaNavigatorPlugin extends Plugin {
 				: [...favorites, path];
 		await this.saveSettings();
 		new Notice(existing >= 0 ? "已移除收藏" : "已添加收藏 ★");
+		this.refreshDashboard();
 		for (const leaf of this.app.workspace.getLeavesOfType(
-			VIEW_TYPE_TOLARIA_HOME
+			VIEW_TYPE_TOLARIA_SIDEBAR
 		)) {
-			(leaf.view as HomeDashboardView).renderFavorites();
+			(leaf.view as SidebarView).refresh();
 		}
-		this.refreshAll();
 	}
 
 	vaultIconName(): string {

@@ -709,12 +709,6 @@
 	flex: none;
 	color: #94948A;
 }
-.ohd-ic-mint {
-	color: #F3CF46;
-}
-.ohd-ic-star {
-	color: #F3CF46;
-}
 .ohd-ic-doc {
 	width: 13px;
 	height: 13px;
@@ -853,42 +847,6 @@
 	line-height: 1.4;
 	flex: 1 1 200px;
 	min-width: 0;
-}
-.ohd-legend {
-	display: flex;
-	align-items: center;
-	gap: 5px;
-	font-size: 11px;
-	color: #94948A;
-	flex: none;
-}
-.ohd-legend-cells {
-	display: flex;
-	gap: 3px;
-}
-.ohd-legend .ohd-cell {
-	width: 11px;
-	height: 11px;
-}
-
-/* ---- bear mascots ---- */
-.ohd-bear {
-	position: absolute;
-	pointer-events: none;
-}
-.ohd-bear svg {
-	display: block;
-	width: 100%;
-	height: 100%;
-}
-.ohd-bear-ov {
-	right: 14px;
-	bottom: 8px;
-	width: 54px;
-	height: 54px;
-	--r: 7deg;
-	opacity: 0.85;
-	animation: bearBob 5s ease-in-out infinite;
 }
 
 /* ---- generic list rows (recent + favorites) ---- */
@@ -1367,17 +1325,9 @@
 		opacity: 0;
 		transform: translate(-50%, 10px);
 	}
-	to {
-		opacity: 1;
-		transform: translate(-50%, 0);
-	}
+		to {
+			opacity: 1;
+			transform: translate(-50%, 0);
+		}
 }
-@keyframes bearBob {
-	0%,
-	100% {
-		transform: translateY(0) rotate(var(--r, 0deg));
-	}
-	50% {
-		transform: translateY(-5px) rotate(var(--r, 0deg));
-	}
-}
+

@@ -222,21 +222,44 @@ export class HomeDashboardView extends ItemView {
 		const generation = ++this.renderGeneration;
 		const previousWords = this.data.totalWords;
 		const previousWordsReady = this.data.totalWordsReady;
-		this.data = new DashboardData(this);
-		this.data.computeQuick();
-		const currentPaths = new Set(this.data.files.map((file) => file.path));
+		const previousCache = new Map(this.wordCache);
+		const data = new DashboardData(this);
+		this.data = data;
+		data.computeQuick();
+		const currentPaths = new Set(data.files.map((file) => file.path));
 		for (const path of this.wordCache.keys()) {
 			if (!currentPaths.has(path)) this.wordCache.delete(path);
 		}
 		if (!recomputeWords && previousWordsReady) {
-			this.data.totalWords = previousWords;
-			this.data.totalWordsReady = true;
+			data.totalWords = previousWords;
+			data.totalWordsReady = true;
 		}
 		this.renderAll();
 		if (recomputeWords || !previousWordsReady) {
-			void this.data.computeWords().then(() => {
-				if (generation === this.renderGeneration) this.renderOverview();
+			void data.computeWords().then(() => {
+				if (generation === this.renderGeneration && this.data === data) this.renderOverview();
 			});
+		} else {
+			// 编辑后按增量修正总字数，而不是沿用旧值
+			void this.applyWordDeltas(data, previousCache, generation);
+		}
+	}
+
+	private async applyWordDeltas(
+		data: DashboardData,
+		previousCache: Map<string, { mtime: number; count: number }>,
+		generation: number
+	): Promise<void> {
+		const stale = data.files.filter(
+			(file) => previousCache.get(file.path)?.mtime !== file.stat.mtime
+		);
+		for (const file of stale) {
+			const previous = previousCache.get(file.path)?.count ?? 0;
+			const count = await this.countWords(file);
+			data.totalWords += count - previous;
+		}
+		if (stale.length && generation === this.renderGeneration && this.data === data) {
+			this.renderOverview();
 		}
 	}
 
@@ -247,7 +270,8 @@ export class HomeDashboardView extends ItemView {
 			const count = wordCount(await this.app.vault.cachedRead(file));
 			this.wordCache.set(file.path, { mtime: file.stat.mtime, count });
 			return count;
-		} catch {
+		} catch (error) {
+			console.warn("[Tolaria] 统计字数失败", file.path, error);
 			this.wordCache.set(file.path, { mtime: file.stat.mtime, count: 0 });
 			return 0;
 		}
@@ -431,10 +455,11 @@ export class HomeDashboardView extends ItemView {
 	}
 
 	private async fillRecentWords(files: TFile[]): Promise<void> {
+		const generation = this.renderGeneration;
 		for (const file of files) {
 			await this.countWords(file);
 		}
-		this.renderRecent();
+		if (generation === this.renderGeneration) this.renderRecent();
 	}
 
 	private folderLabel(file: TFile): string {
