@@ -72,9 +72,6 @@ export default class TolariaNavigatorPlugin extends Plugin {
 		this.addRibbonIcon("list-tree", "打开 Tolaria 导航", () => {
 			void this.activateSidebar();
 		});
-		this.addRibbonIcon("layout-dashboard", "打开主页控制台", () => {
-			void this.openHomepage();
-		});
 		this.addSettingTab(new TolariaNavigatorSettingTab(this.app, this));
 
 		this.addCommand({
@@ -498,9 +495,15 @@ export default class TolariaNavigatorPlugin extends Plugin {
 			if (!this.isAttachedLeaf(host)) return;
 			dashboard = host.view.getViewType() === "empty" ? host : this.createTabInGroup(host);
 			await dashboard.setViewState({ type: VIEW_TYPE_TOLARIA_HOME, active: true });
+			this.pinHomeTab(dashboard);
 		}
 		this.editorGroupLeaf = dashboard;
 		await this.app.workspace.revealLeaf(dashboard);
+	}
+
+	/** 主页控制台标签创建时默认锁定，避免被日常打开的笔记替换。 */
+	private pinHomeTab(leaf: WorkspaceLeaf): void {
+		leaf.setPinned(true);
 	}
 
 	private allWorkspaceLeaves(): WorkspaceLeaf[] {
@@ -591,6 +594,7 @@ export default class TolariaNavigatorPlugin extends Plugin {
 		const workspace = this.app.workspace;
 		const leaf = workspace.createLeafBySplit(listLeaf, "vertical", false);
 		await leaf.setViewState({ type: viewType, active: false });
+		if (viewType === VIEW_TYPE_TOLARIA_HOME) this.pinHomeTab(leaf);
 		return leaf;
 	}
 
@@ -637,6 +641,7 @@ export default class TolariaNavigatorPlugin extends Plugin {
 				type: VIEW_TYPE_TOLARIA_HOME,
 				active: false,
 			});
+			this.pinHomeTab(dashboard);
 		}
 		misplacedDashboard?.detach();
 
@@ -724,7 +729,9 @@ export default class TolariaNavigatorPlugin extends Plugin {
 			);
 			editorGroup = await this.createRightGroup(
 				listLeaf,
-				hasDashboard || !firstDocument ? VIEW_TYPE_TOLARIA_HOME : "empty"
+				hasDashboard || (!firstDocument && openHome)
+					? VIEW_TYPE_TOLARIA_HOME
+					: "empty"
 			);
 		} else {
 			this.cleanupEmptyMainGroups(listLeaf, editorGroup);
@@ -738,6 +745,7 @@ export default class TolariaNavigatorPlugin extends Plugin {
 				type: VIEW_TYPE_TOLARIA_HOME,
 				active: false,
 			});
+			this.pinHomeTab(editorGroup);
 		}
 
 		return listLeaf;
