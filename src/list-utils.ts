@@ -42,3 +42,10 @@ export function todayKey(): string {
 export function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
+
+/** 从「09:30 写周报」这类日程输入里拆出时间前缀 */
+export function parseTaskInput(raw: string): { time: string; text: string } {
+	const value = raw.trim();
+	const match = value.match(/^(\d{1,2}:\d{2})\s+(.+)$/);
+	return { time: match?.[1] ?? "", text: match?.[2] ?? value };
+}

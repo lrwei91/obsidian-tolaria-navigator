@@ -197,23 +197,8 @@ export class TolariaNavigatorSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("分类导航根目录")
-			.setDesc("主页控制台“分类导航”扫描的目录，按其一级子目录归类；留空则使用整个仓库。")
-			.addSearch((search) => {
-				new FolderSuggest(this.app, search.inputEl);
-				search
-					.setPlaceholder(DEFAULT_SETTINGS.dashboard.navigationRoot)
-					.setValue(this.plugin.settings.dashboard.navigationRoot)
-					.onChange(async (value) => {
-						this.plugin.settings.dashboard.navigationRoot = normalizeSettingPath(value);
-						await this.plugin.saveSettings();
-						this.plugin.refreshDashboard();
-					});
-			});
-
-		new Setting(containerEl)
 			.setName("总字数换算书目")
-			.setDesc("概览页脚把总字数换算成“约等于几本书”的书名；留空则不显示换算。")
+			.setDesc("概览把总字数换算成“约等于几本书”的书名；留空则显示笔记总数。")
 			.addText((text) =>
 				text
 					.setPlaceholder(DEFAULT_SETTINGS.dashboard.bookTitle)

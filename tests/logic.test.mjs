@@ -9,7 +9,11 @@ import {
 	isArchivedFrontmatter,
 	parseFrontmatterDate,
 } from "../src/types.ts";
-import { applyTemplate, getVirtualRange } from "../src/list-utils.ts";
+import {
+	applyTemplate,
+	getVirtualRange,
+	parseTaskInput,
+} from "../src/list-utils.ts";
 
 test("收件箱和根目录使用严格的文件夹边界", () => {
 	assert.equal(pathIsWithin("inbox/note.md", "inbox"), true);
@@ -74,4 +78,14 @@ test("主库模板替换标题与日期占位符", () => {
 		applyTemplate("# {{title}}\n{{date}} / {{title}}", "未命名", "2026-08-25"),
 		"# 未命名\n2026-08-25 / 未命名"
 	);
+});
+
+test("日程输入解析时间前缀", () => {
+	assert.deepEqual(parseTaskInput("09:30 写周报"), {
+		time: "09:30",
+		text: "写周报",
+	});
+	assert.deepEqual(parseTaskInput("  复盘  "), { time: "", text: "复盘" });
+	assert.deepEqual(parseTaskInput("9:30 站会"), { time: "9:30", text: "站会" });
+	assert.deepEqual(parseTaskInput("   "), { time: "", text: "" });
 });

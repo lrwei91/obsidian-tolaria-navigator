@@ -14,6 +14,7 @@ import {
 	HomeDashboardView,
 	VIEW_TYPE_TOLARIA_HOME,
 } from "./home-dashboard";
+import { TaskStore } from "./task-store";
 import { isArchivedCache, isOrganizedCache, NoteFilter, normalizeTag } from "./types";
 import { VaultService } from "./vault-service";
 import { removePathsWithin, replacePathPrefix } from "./path-utils";
@@ -36,6 +37,7 @@ export default class TolariaNavigatorPlugin extends Plugin {
 	service!: VaultService;
 	desktop!: DesktopAdapter;
 	layout!: LayoutController;
+	tasks!: TaskStore;
 	declare settings: TolariaNavigatorSettings;
 	currentFilter: NoteFilter | null = null;
 	folderExpansion = new Map<string, boolean>();
@@ -51,6 +53,19 @@ export default class TolariaNavigatorPlugin extends Plugin {
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
+		this.tasks = new TaskStore(
+			this.app,
+			`${this.app.vault.configDir}/plugins/${this.manifest.id}`
+		);
+		await this.tasks.load();
+		const migratedDays = this.tasks.absorbLegacy(
+			this.settings.dashboard.tasksByDate
+		);
+		if (migratedDays > 0) {
+			// 日程任务已迁出到独立的 tasks.json，旧位置只保留空结构以兼容字段
+			this.settings.dashboard.tasksByDate = {};
+			await this.saveSettings();
+		}
 		this.pinnedPaths = new Set(this.settings.pinnedNotePaths);
 		this.collapsedGroups = new Set(this.settings.collapsedSidebarGroups);
 		this.folderExpansion = new Map(
@@ -101,16 +116,6 @@ export default class TolariaNavigatorPlugin extends Plugin {
 			callback: () => void this.layout.openHomepage(),
 		});
 		this.addCommand({
-			id: "toggle-dashboard-favorite-current",
-			name: "将当前文件加入/移出控制台收藏",
-			checkCallback: (checking) => {
-				const file = this.app.workspace.getActiveFile();
-				if (!file || file.extension !== "md") return false;
-				if (!checking) void this.toggleDashboardFavorite(file.path);
-				return true;
-			},
-		});
-		this.addCommand({
 			id: "open-all-notes",
 			name: "打开全部笔记列表",
 			callback: () =>
@@ -156,25 +161,10 @@ export default class TolariaNavigatorPlugin extends Plugin {
 			})
 		);
 		this.registerEvent(
-			this.app.workspace.on("file-menu", (menu, file) => {
-				if (!(file instanceof TFile) || file.extension !== "md") return;
-				const favorite = this.settings.dashboard.favorites.includes(file.path);
-				menu.addItem((item) =>
-					item
-						.setTitle(favorite ? "从控制台收藏移除" : "添加到控制台收藏")
-						.setIcon("star")
-						.onClick(() => void this.toggleDashboardFavorite(file.path))
-				);
+			this.app.metadataCache.on("resolved", () => {
+				this.refreshAll();
 			})
 		);
-		const resolvedRef = this.app.metadataCache.on("resolved", () => {
-			void this.migrateLegacyFavoriteFlags().then((done) => {
-				// 一次性迁移：完成后注销监听，避免 "resolved" 每次触发都跑一遍
-				if (done) this.app.metadataCache.offref(resolvedRef);
-				this.refreshAll();
-			});
-		});
-		this.registerEvent(resolvedRef);
 		this.registerEvent(
 			this.app.metadataCache.on("changed", (file) => {
 				this.service.invalidateExcerpt(file.path);
@@ -208,7 +198,6 @@ export default class TolariaNavigatorPlugin extends Plugin {
 
 		this.app.workspace.onLayoutReady(() => {
 			this.layoutReady = true;
-			void this.migrateLegacyFavoriteFlags();
 			const fixLayout = () => {
 				void this.layout
 					.ensureLayout(this.settings.openHomeOnStartup)
@@ -227,6 +216,7 @@ export default class TolariaNavigatorPlugin extends Plugin {
 		this.refreshAll.cancel();
 		this.refreshChanged.cancel();
 		if (this.settingsDirty) void this.saveSettings();
+		this.tasks.flush();
 		this.layout.dispose();
 	}
 
@@ -327,33 +317,6 @@ export default class TolariaNavigatorPlugin extends Plugin {
 	saveSettingsSoon(): void {
 		this.settingsDirty = true;
 		this.persistSettings();
-	}
-
-	private async migrateLegacyFavoriteFlags(): Promise<boolean> {
-		if (this.settings.legacyFavoriteFlagsMigrated) return true;
-		const files = this.app.vault.getMarkdownFiles();
-		const cachedFiles = files.filter((file) =>
-			this.app.metadataCache.getFileCache(file)
-		);
-		if (files.length > 0 && cachedFiles.length === 0) return false;
-		const legacyFavorites = cachedFiles
-			.filter(
-				(file) =>
-					this.app.metadataCache.getFileCache(file)?.frontmatter?.[
-						"favorite"
-					] === true
-			)
-			.map((file) => file.path);
-		this.settings.dashboard.favorites = [
-			...new Set([
-				...this.settings.dashboard.favorites,
-				...legacyFavorites,
-			]),
-		];
-		this.settings.legacyFavoriteFlagsMigrated = true;
-		await this.saveSettings();
-		this.refreshDashboard();
-		return true;
 	}
 
 	async toggleSidebarGroup(key: string): Promise<void> {
@@ -458,10 +421,6 @@ export default class TolariaNavigatorPlugin extends Plugin {
 		}
 		this.pinnedPaths = nextPinned;
 		this.syncPinnedPaths();
-		const favorites = this.settings.dashboard.favorites.map((path) =>
-			replacePathPrefix(path, oldPath, newPath)
-		);
-		this.settings.dashboard.favorites = [...new Set(favorites)];
 
 		if (this.currentFilter?.kind === "folder") {
 			this.currentFilter.value = replacePathPrefix(
@@ -492,13 +451,8 @@ export default class TolariaNavigatorPlugin extends Plugin {
 		this.service.invalidateExcerpt(path);
 		this.sidebarMetaCache.delete(path);
 		const pinned = removePathsWithin([...this.pinnedPaths], path);
-		const favorites = removePathsWithin(
-			this.settings.dashboard.favorites,
-			path
-		);
 		this.pinnedPaths = new Set(pinned);
 		this.settings.pinnedNotePaths = pinned;
-		this.settings.dashboard.favorites = favorites;
 		if (
 			this.currentFilter?.kind === "folder" &&
 			removePathsWithin([this.currentFilter.value ?? ""], path).length === 0
@@ -604,6 +558,7 @@ export default class TolariaNavigatorPlugin extends Plugin {
 		}
 	}
 
+	/** 侧边栏「收藏」视图的数据入口；控制台面板已移除，但视图和右键菜单仍在 */
 	async toggleDashboardFavorite(path: string): Promise<void> {
 		const favorites = this.settings.dashboard.favorites;
 		const existing = favorites.indexOf(path);
@@ -612,7 +567,7 @@ export default class TolariaNavigatorPlugin extends Plugin {
 				? favorites.filter((favorite) => favorite !== path)
 				: [...favorites, path];
 		await this.saveSettings();
-		new Notice(existing >= 0 ? "已移除收藏" : "已添加收藏 ★");
+		new Notice(existing >= 0 ? "已从收藏视图移除" : "已添加到收藏视图 ★");
 		this.refreshDashboard();
 		for (const leaf of this.app.workspace.getLeavesOfType(
 			VIEW_TYPE_TOLARIA_SIDEBAR
