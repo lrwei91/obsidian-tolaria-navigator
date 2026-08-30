@@ -336,11 +336,11 @@ export class HomeDashboardView extends ItemView {
 		this.panels.kpiWords = bento.createDiv("ohd-card ohd-kpi ohd-kpi-words");
 		this.panels.kpiMonth = bento.createDiv("ohd-card ohd-kpi ohd-kpi-month");
 		this.panels.kpiBook = bento.createDiv("ohd-card ohd-kpi ohd-kpi-book");
-		this.panels.heat = bento.createDiv("ohd-card ohd-heatcard");
 		this.panels.recent = bento.createDiv("ohd-card ohd-recent");
 		const side = bento.createDiv("ohd-side");
 		this.panels.agenda = side.createDiv("ohd-card ohd-agenda");
 		this.panels.calendar = side.createDiv("ohd-card ohd-calendar");
+		this.panels.heat = bento.createDiv("ohd-card ohd-heatcard");
 	}
 
 	private renderAll(): void {
